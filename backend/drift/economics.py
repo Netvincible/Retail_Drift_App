@@ -1,51 +1,46 @@
 from pymongo import MongoClient
+from dotenv import load_dotenv
+import os
 
-# MongoDB connection
-client = MongoClient("mongodb://localhost:27017")
-db = client.drift
+load_dotenv()
 
+client = MongoClient(os.getenv("MONGO_URI", "mongodb://localhost:27017"))
+db = client["drift"]
 
-def get_camera_economics(camera_code: str):
-    """
-    Returns ONLY economic context for a camera.
-    Used by Gemini for drift calculation.
+def get_camera_economics(camera_code: str) -> dict:
+    cam = db.cameras.find_one({"camera_id": camera_code})
 
-    Output keys (MUST exist):
-    - total_value
-    - premium_value
-    """
+    if not cam:
+        raise ValueError(f"Camera not found: {camera_code}")
 
-    camera = db.cameras.find_one({"camera_code": camera_code})
+    aisles = cam["aisles"]
 
-    if not camera:
-        raise RuntimeError(f"Camera not found: {camera_code}")
+    premium_indices = []
+    sale_indices = []
 
-    aisle_ids = camera.get("viewing_aisles", [])
-
-    if not aisle_ids:
-        # No aisles → no economics
-        return {
-            "total_value": 1,
-            "premium_value": 0
-        }
-
-    aisles = list(db.aisles.find({"_id": {"$in": aisle_ids}}))
-
-    total_value = 0
     premium_value = 0
+    sale_value = 0
 
     for aisle in aisles:
-        aisle_value = aisle.get("total_value", 0)
-        total_value += aisle_value
+        idx = aisle["aisle_index"]
+        aisle_type = aisle["aisle_type"]
 
-        if aisle.get("aisle_type") == "premium":
-            premium_value += aisle_value
+        aisle_price = sum(p["price"] for p in aisle["products"])
 
-    # 🔒 Prevent divide-by-zero in Gemini math
-    if total_value <= 0:
-        total_value = 1
+        if aisle_type == "premium":
+            premium_indices.append(idx)
+            premium_value += aisle_price
+        else:
+            sale_indices.append(idx)
+            sale_value += aisle_price
+
+    total_value = premium_value + sale_value
 
     return {
-        "total_value": total_value,
-        "premium_value": premium_value
+        "total_aisles": len(aisles),
+        "premium_indices": premium_indices,
+        "sale_indices": sale_indices,
+        "premium_value": premium_value,
+        "sale_value": sale_value,
+        "total_value": total_value
     }
