@@ -1,0 +1,2 @@
+LATEST_FRAME = {}
+DRIFT_STATE = {}

@@ -1,12 +1,20 @@
+import time
+import threading
+import cv2
+
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
-import cv2
-import time
 
+from drift.overlay import draw_drift_border
+from drift.worker import drift_worker
+from drift.state import LATEST_FRAME, DRIFT_STATE
+
+# -----------------------------
+# APP SETUP
+# -----------------------------
 app = FastAPI()
 
-# Allow React to talk to Python
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -14,44 +22,79 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 1. LOAD THE VIDEO
-# Ensure video.mp4 is in the same folder as this file
-video_path = "video.mp4"
-def generate_frames():
-    cap = cv2.VideoCapture(video_path)
+# -----------------------------
+# CAMERA CONFIGURATION
+# -----------------------------
+CAMERA_CONFIG = {
+    "CAM-01": "cameras/cam_01.mp4",
+    # Add more cameras here later
+}
+
+# -----------------------------
+# VIDEO STREAM GENERATOR
+# -----------------------------
+def camera_stream(camera_code: str):
+    cap = cv2.VideoCapture(CAMERA_CONFIG[camera_code])
 
     while True:
-        success, frame = cap.read()
-        if not success:
+        ret, frame = cap.read()
+
+        # Loop video
+        if not ret:
             cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
             continue
 
-        # --- THE FIX: SLOW DOWN THE STREAM ---
-        # 0.03 seconds sleep = roughly 30 Frames Per Second
+        # Save latest frame for background worker
+        LATEST_FRAME[camera_code] = frame.copy()
+
+        # Read latest drift score
+        drift_score = DRIFT_STATE[camera_code]["score"]
+
+        # Draw overlay
+        frame = draw_drift_border(frame, drift_score)
+
+        # Encode as JPEG
+        _, buffer = cv2.imencode(".jpg", frame)
+
+        yield (
+            b"--frame\r\n"
+            b"Content-Type: image/jpeg\r\n\r\n" +
+            buffer.tobytes() +
+            b"\r\n"
+        )
+
+        # ~30 FPS
         time.sleep(0.03)
-        # -------------------------------------
 
-        # Draw the Red Box (The "Dead Zone")
-        # Ensure these coordinates are valid for your video resolution!
-        # If your video is small, these numbers might be off-screen.
-        height, width, _ = frame.shape
-        cv2.rectangle(frame, (width//2, height//2), (width-100, height-100), (0, 0, 255), 4)
+# -----------------------------
+# API ENDPOINTS
+# -----------------------------
+@app.get("/video/{camera_code}")
+def video_feed(camera_code: str):
+    return StreamingResponse(
+        camera_stream(camera_code),
+        media_type="multipart/x-mixed-replace; boundary=frame"
+    )
 
-        # Add Text
-        cv2.putText(frame, "DRIFT DETECTED", (width//2, height//2 - 10),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 3)
 
-        # Encode the frame
-        ret, buffer = cv2.imencode('.jpg', frame)
-        frame_bytes = buffer.tobytes()
+@app.get("/drift/{camera_code}")
+def get_drift(camera_code: str):
+    state = DRIFT_STATE.get(camera_code, {})
+    return {
+        "camera": camera_code,
+        "drift_score": state.get("score", 0),
+        "last_updated": state.get("last_updated", 0)
+    }
 
-        yield (b'--frame\r\n'
-               b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
-
-@app.get("/")
-def read_root():
-    return {"status": "Vision Engine Online"}
-
-@app.get("/video_feed")
-def video_feed():
-    return StreamingResponse(generate_frames(), media_type="multipart/x-mixed-replace; boundary=frame")
+# -----------------------------
+# STARTUP: WORKERS
+# -----------------------------
+@app.on_event("startup")
+def start_background_workers():
+    for cam in CAMERA_CONFIG:
+        DRIFT_STATE[cam] = {"score": 0, "last_updated": 0}
+        threading.Thread(
+            target=drift_worker,
+            args=(cam,),
+            daemon=True
+        ).start()
