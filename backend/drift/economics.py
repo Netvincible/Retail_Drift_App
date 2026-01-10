@@ -1,51 +1,41 @@
 from pymongo import MongoClient
 
-# MongoDB connection
 client = MongoClient("mongodb://localhost:27017")
-db = client.drift
+db = client["drift"]
+cameras = db["cameras"]
 
 
 def get_camera_economics(camera_code: str):
-    """
-    Returns ONLY economic context for a camera.
-    Used by Gemini for drift calculation.
-
-    Output keys (MUST exist):
-    - total_value
-    - premium_value
-    """
-
-    camera = db.cameras.find_one({"camera_code": camera_code})
+    camera = cameras.find_one({"camera_id": camera_code})
 
     if not camera:
-        raise RuntimeError(f"Camera not found: {camera_code}")
+        raise ValueError(f"Camera {camera_code} not found")
 
-    aisle_ids = camera.get("viewing_aisles", [])
+    premium_indices = []
+    sale_indices = []
 
-    if not aisle_ids:
-        # No aisles → no economics
-        return {
-            "total_value": 1,
-            "premium_value": 0
-        }
+    premium_price = 0
+    sale_price = 0
 
-    aisles = list(db.aisles.find({"_id": {"$in": aisle_ids}}))
+    for aisle in camera["aisles"]:
+        idx = aisle["aisle_index"]
+        aisle_type = aisle["aisle_type"]
 
-    total_value = 0
-    premium_value = 0
+        aisle_total = sum(p["price"] for p in aisle["products"])
 
-    for aisle in aisles:
-        aisle_value = aisle.get("total_value", 0)
-        total_value += aisle_value
-
-        if aisle.get("aisle_type") == "premium":
-            premium_value += aisle_value
-
-    # 🔒 Prevent divide-by-zero in Gemini math
-    if total_value <= 0:
-        total_value = 1
+        if aisle_type == "premium":
+            premium_indices.append(idx)
+            premium_price += aisle_total
+        else:
+            sale_indices.append(idx)
+            sale_price += aisle_total
 
     return {
-        "total_value": total_value,
-        "premium_value": premium_value
+        "camera_id": camera_code,
+        "aisle_count": len(camera["aisles"]),
+        "premium_aisle_indices": premium_indices,
+        "sale_aisle_indices": sale_indices,
+        "premium_total_price": premium_price,
+        "sale_total_price": sale_price,
+        "total_price": premium_price + sale_price
     }
