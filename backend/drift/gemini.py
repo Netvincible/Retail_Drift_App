@@ -1,69 +1,104 @@
+import time
 import base64
-import json
 import cv2
-import os
-import google.generativeai as genai
+from google import genai
+from threading import Lock
 
-# Gemini setup
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+# -----------------------------------
+# GEMINI CLIENT (NEW SDK ONLY)
+# -----------------------------------
+client = genai.Client(api_key="AIzaSyBDEkadKuaqc607GIOHcLLakRBMjBg43jk")
 
-model = genai.GenerativeModel("gemini-1.5-flash")
+MODEL_NAME = "gemini-2.0-flash"
 
+# -----------------------------------
+# HARD RATE LIMITING (MANDATORY)
+# -----------------------------------
+_LAST_CALL_TS = 0
+_COOLDOWN_SECONDS = 45   # FREE TIER SAFE
+_LOCK = Lock()
 
+# -----------------------------------
+# MAIN FUNCTION
+# -----------------------------------
 def get_drift_score(frame, economics: dict) -> int:
     """
-    Send one frame + economic context to Gemini
-    and receive a drift score between 0 and 100.
+    Calls Gemini ONCE per cooldown window.
+    Returns an integer drift score between 0–100.
     """
 
-    # 1. Encode frame as JPEG
-    success, buffer = cv2.imencode(".jpg", frame)
+    global _LAST_CALL_TS
+
+    with _LOCK:
+        now = time.time()
+        if now - _LAST_CALL_TS < _COOLDOWN_SECONDS:
+            # Do NOT call Gemini again
+            return economics.get("last_score", 0)
+
+        _LAST_CALL_TS = now
+
+    # -----------------------------------
+    # ENCODE IMAGE (JPEG → BASE64)
+    # -----------------------------------
+    success, jpeg = cv2.imencode(".jpg", frame)
     if not success:
-        return 0
+        raise RuntimeError("Frame JPEG encoding failed")
 
-    image_base64 = base64.b64encode(buffer).decode("utf-8")
+    image_b64 = base64.b64encode(jpeg.tobytes()).decode("utf-8")
 
-    # 2. Strict prompt (JSON-only)
+    # -----------------------------------
+    # PROMPT (STRICT + NUMERIC)
+    # -----------------------------------
     prompt = f"""
-You are a retail CCTV drift analyzer.
+You are a retail analytics AI.
 
-Context:
-- Premium economic weight: {economics['premium_weight']}
-- Cheap/sale economic weight: {economics['cheap_weight']}
+You MUST calculate a Drift Score between 0 and 100.
 
-Task:
-Analyze the image and estimate customer attention imbalance.
-If customers are concentrated in low economic areas
-while premium zones appear ignored, drift is high.
+Definitions:
+- Premium aisle value: {economics['premium_value']}
+- Standard aisle value: {economics['standard_value']}
+- Discount aisle value: {economics['discount_value']}
+- People in premium aisle: {economics['people_premium']}
+- People in standard aisle: {economics['people_standard']}
+- People in discount aisle: {economics['people_discount']}
 
 Rules:
-- Output ONLY valid JSON
-- No explanations
-- Drift score must be between 0 and 100
+- High crowd in discount with high premium value = HIGH drift
+- High crowd in premium with premium value = LOW drift
+- Ignore aesthetics, focus on revenue mismatch
 
-Return format:
-{{ "drift_score": number }}
+Return ONLY a single integer between 0 and 100.
+NO text.
+NO explanation.
 """
 
-    # 3. Call Gemini
-    response = model.generate_content(
-        [
-            prompt,
-            {
-                "mime_type": "image/jpeg",
-                "data": image_base64
-            }
-        ],
-        generation_config={
-            "temperature": 0.2,
-            "max_output_tokens": 50
-        }
-    )
-
-    # 4. Parse safely
+    # -----------------------------------
+    # GEMINI CALL (CORRECT FORMAT)
+    # -----------------------------------
     try:
-        result = json.loads(response.text)
-        score = int(result.get("drift_score", 0))
-        return max(0, min(score, 100))
-    except Exception:
-        return 0
+        response = client.models.generate_content(
+            model=MODEL_NAME,
+            contents=[
+                prompt,
+                {
+                    "mime_type": "image/jpeg",
+                    "data": image_b64
+                }
+            ]
+        )
+
+        raw = response.text.strip()
+
+        # -----------------------------------
+        # PARSE OUTPUT SAFELY
+        # -----------------------------------
+        score = int("".join(c for c in raw if c.isdigit()))
+        score = max(0, min(100, score))
+
+        economics["last_score"] = score
+        return score
+
+    except Exception as e:
+        # NEVER CRASH WORKER
+        print(f"[GEMINI ERROR] {e}")
+        return economics.get("last_score", 0)
