@@ -1,0 +1,107 @@
+backend/drift/gemini.py
+# =========================
+# Python core
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# =========================
+# Virtual environments
+# =========================
+venv/
+.env/
+.env.*
+.venv/
+pip-wheel-metadata/
+
+# =========================
+# Environment variables / secrets
+# =========================
+*.env
+.env.local
+.env.production
+.env.dev
+
+# =========================
+# Logs
+# =========================
+*.log
+logs/
+log/
+
+# =========================
+# ML / AI artifacts
+# =========================
+models/
+checkpoints/
+*.pt
+*.pth
+*.onnx
+*.h5
+*.joblib
+*.pkl
+
+# =========================
+# Runtime / temp files
+# =========================
+tmp/
+temp/
+.cache/
+.ipynb_checkpoints/
+
+# =========================
+# OS-specific
+# =========================
+.DS_Store
+Thumbs.db
+
+# =========================
+# IDE / Editor
+# =========================
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# =========================
+# MongoDB
+# =========================
+data/db/
+dump/
+*.bson
+
+# =========================
+# Build / dist
+# =========================
+build/
+dist/
+*.egg-info/
+
+# =========================
+# Coverage / testing
+# =========================
+.coverage
+htmlcov/
+
+# =========================
+# Gemini / API local configs
+# =========================
+credentials.json
+service_account.json
+
+# =========================
+# Docker
+# =========================
+docker-data/
+*.pid
+
+# =========================
+# Node (if frontend exists)
+# =========================
+node_modules/
+npm-debug.log*
+yarn-error.log*
