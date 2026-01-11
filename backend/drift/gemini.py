@@ -2,7 +2,7 @@ from google import genai
 from google.genai import types
 import cv2
 
-client = genai.Client(api_key="AIzaSyBIMFe_mfE-kXlkrG8o_3SHBduuN3PTQTw")
+client = genai.Client(api_key="Your API Key")
 
 def get_drift_score(frame, economics: dict) -> int:
     """
@@ -55,30 +55,7 @@ RULES:
 - Return ONLY the integer drift value.
 - No explanation.
 """
-#     prompt = f"""
-# You are analyzing a retail CCTV frame.
-#
-# Aisle layout:
-# - Total aisles: {economics["total_aisles"]}
-# - Premium aisles (0-based index, right to left): {economics["premium_indices"]}
-# - Sale aisles (0-based index, right to left): {economics["sale_indices"]}
-#
-# Economic values:
-# - Premium value: {economics["premium_value"]}
-# - Total value: {economics["total_value"]}
-#
-# TASK:
-# 1. Count how many people are standing in premium aisles.
-# 2. Count total people visible.
-# 3. Compute drift using this EXACT formula:
-#
-# ((people_in_premium / total_people) - (premium_value / total_value)) * 100
-#
-# Rules:
-# - If result is negative, return 0.
-# - Return ONLY the final integer drift value.
-# - No explanation.
-# """
+
 
     response = client.models.generate_content(
         model="gemini-2.5-flash",
